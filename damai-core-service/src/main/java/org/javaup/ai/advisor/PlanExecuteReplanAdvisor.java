@@ -275,11 +275,25 @@ public class PlanExecuteReplanAdvisor implements BaseChatMemoryAdvisor {
     }
     
     private boolean shouldReplan(String output) {
+        if (output == null) return false;
         String lowerOutput = output.toLowerCase();
-        return lowerOutput.contains("需要调整") || 
-               lowerOutput.contains("发现新线索") ||
-               lowerOutput.contains("重新规划") ||
-               lowerOutput.contains("补充步骤");
+        
+        // 显式重规划信号
+        if (lowerOutput.contains("需要调整") || lowerOutput.contains("发现新线索") ||
+            lowerOutput.contains("重新规划") || lowerOutput.contains("补充步骤") ||
+            lowerOutput.contains("新发现") || lowerOutput.contains("意外")) {
+            return true;
+        }
+        
+        // 失败信号 - 工具调用返回错误
+        if (lowerOutput.contains("失败") || lowerOutput.contains("error") ||
+            lowerOutput.contains("exception") || lowerOutput.contains("超时") ||
+            lowerOutput.contains("timeout") || lowerOutput.contains("无法连接")) {
+            log.info("检测到执行失败信号，触发重规划");
+            return true;
+        }
+        
+        return false;
     }
     
     private void logPlan(List<ExecutionStep> steps) {
@@ -294,7 +308,27 @@ public class PlanExecuteReplanAdvisor implements BaseChatMemoryAdvisor {
     
     private void logExecutionSummary(List<ExecutionStep> steps) {
         long completed = steps.stream().filter(s -> s.getStatus() == StepStatus.COMPLETED).count();
-        log.info("执行摘要: 完成 {}/{} 个步骤", completed, steps.size());
+        long failed = steps.stream().filter(s -> s.getStatus() == StepStatus.FAILED).count();
+        long skipped = steps.stream().filter(s -> s.getStatus() == StepStatus.SKIPPED).count();
+        long pending = steps.stream().filter(s -> s.getStatus() == StepStatus.PENDING).count();
+        int totalRetries = steps.stream().mapToInt(ExecutionStep::getRetryCount).sum();
+        
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("\n=== 执行摘要 ===\n"));
+        sb.append(String.format("完成: %d | 失败: %d | 跳过: %d | 未执行: %d | 重试总次数: %d\n", 
+                completed, failed, skipped, pending, totalRetries));
+        for (ExecutionStep step : steps) {
+            String emoji = switch (step.getStatus()) {
+                case COMPLETED -> "✓";
+                case FAILED -> "✗";
+                case SKIPPED -> "→";
+                default -> "○";
+            };
+            sb.append(String.format("  %s [%d] %s (重试:%d)\n", emoji, step.getId(), 
+                    step.getAction(), step.getRetryCount()));
+        }
+        sb.append("===============");
+        log.info(sb.toString());
     }
     
     @Override
@@ -342,6 +376,8 @@ public class PlanExecuteReplanAdvisor implements BaseChatMemoryAdvisor {
         PENDING,       // 待执行
         EXECUTING,     // 执行中
         COMPLETED,     // 已完成
+        FAILED,        // 执行失败
+        RETRYING,      // 重试中
         SKIPPED        // 已跳过
     }
     
@@ -352,6 +388,8 @@ public class PlanExecuteReplanAdvisor implements BaseChatMemoryAdvisor {
         private StepStatus status;
         private List<String> toolCalls;
         private String result;
+        private int retryCount;
+        private List<Integer> dependsOn;
         
         public int getId() { return id; }
         public void setId(int id) { this.id = id; }
@@ -370,5 +408,11 @@ public class PlanExecuteReplanAdvisor implements BaseChatMemoryAdvisor {
         
         public String getResult() { return result; }
         public void setResult(String result) { this.result = result; }
+        
+        public int getRetryCount() { return retryCount; }
+        public void setRetryCount(int retryCount) { this.retryCount = retryCount; }
+        
+        public List<Integer> getDependsOn() { return dependsOn; }
+        public void setDependsOn(List<Integer> dependsOn) { this.dependsOn = dependsOn; }
     }
 }

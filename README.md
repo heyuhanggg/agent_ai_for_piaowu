@@ -10,6 +10,9 @@
 - 📊 **AI可观测性**: 完整的Token统计、成本分析、请求追踪能力
 - 🎯 **Function Calling**: 支持节目推荐、订单创建等业务函数调用
 - 💬 **多角色对话**: 贴心助手、规则助手、运维助手三种AI角色
+- 🛡️ **Guardrails护栏**: Prompt注入检测、输出脱敏、工具调用安全
+- 🧠 **上下文工程**: 动态压缩、实体记忆、工具结果摘要
+- 🔄 **自适应RAG**: 根据查询类型自动决策是否检索 + 纠正式RAG
 
 ## 技术架构
 
@@ -20,35 +23,45 @@
 - **向量存储**: SimpleVectorStore
 - **前端**: Vue 3 + TypeScript + Vite
 
-### 系统架构
+### Agent 分层架构
+
 ```
-├── ticket-core-service      # 核心AI服务
-│   ├── advisor/            # 自定义Advisor (可观测性、查询改写等)
-│   ├── ai/                 # AI相关实现 (RAG、Function Calling)
-│   ├── config/             # 配置类 (模型配置、MCP配置)
-│   ├── service/            # 业务服务 (混合检索、Rerank)
-│   └── controller/         # REST API
-├── ticket-mcp-server        # MCP工具服务
-│   ├── ticket-mcp-log-service      # 日志查询服务
-│   └── ticket-mcp-metrics-service  # 指标监控服务
-└── vue/                    # 前端界面
+请求 → [护栏层] → [路由层] → [上下文工程层] → [RAG层] → [决策层] → [业务层] → [工具护栏层] → [可观测性层] → [输出护栏层] → 响应
 ```
+
+| 层级 | Advisor | 职责 |
+|------|---------|------|
+| **护栏层** | InputGuardrailAdvisor | Prompt注入检测、敏感信息过滤、输入长度限制 |
+| **路由层** | AgentRouterAdvisor | 意图分类(购票/运维/规则/闲聊)、复杂度评估 |
+| **上下文工程** | ContextCompressionAdvisor | 对话超12轮时LLM摘要压缩早期消息 |
+| | EntityMemoryAdvisor | 自动提取实体(城市/节目/手机号)，避免重复询问 |
+| | ToolResultSummaryAdvisor | 压缩超长工具返回数据 |
+| **RAG层** | AdaptiveRagAdvisor | 根据查询类型自动决定是否检索 |
+| | CorrectiveRagAdvisor | 检索结果相关性评估、低质过滤、查询改写重检索 |
+| **决策层** | ReactAdvisor | Thought→Action→Observation迭代(购票助手) |
+| | PlanExecuteReplanAdvisor | 制定计划→执行→失败重试→动态调整(运维助手) |
+| **工具护栏** | ToolCallGuardrailAdvisor | 频率限制、幂等保护(防重复下单)、调用审计 |
+| **可观测性** | AiObservabilityAdvisor | Token统计、成本计算、延迟监控 |
+| **输出护栏** | OutputGuardrailAdvisor | 敏感信息脱敏、编造数据检测 |
+| **质量保障** | SelfReflectionAdvisor | 输出质量自评、改进建议注入 |
 
 ## 功能特性
 
-### 1. 贴心助手 - ReAct 决策模式 🔄
-**采用 ReAct (Reason + Act) 决策机制，在推理、工具调用与结果观察之间迭代执行**
+### 1. 贴心助手 - 完整Agent架构 🤖
 
-- 🎫 **节目推荐**: 基于用户位置和偏好推荐演出
-- 📝 **详情查询**: 提供节目详情、票价、演出时间
-- 🛒 **智能下单**: 通过对话完成购票流程
-- 💬 **多轮对话**: 保持上下文的自然交互
-- 🔄 **ReAct循环**: Thought → Action → Observation，最多5轮迭代
-- 🧠 **思考过程**: 每步都会先分析当前状态再决定行动
+**采用 护栏 + 路由 + 上下文工程 + 自适应RAG + ReAct决策 的完整Agent架构**
 
-**工作流程：**
+- 🛡️ **输入安全**: Prompt注入检测、敏感信息拦截
+- 🔀 **智能路由**: 自动识别购票/规则/闲聊意图
+- 🧠 **实体记忆**: 自动记住城市、节目、手机号等，避免重复询问
+- 📦 **上下文压缩**: 长对话自动摘要，保持上下文窗口效率
+- 📚 **自适应RAG**: 规则查询自动检索知识库，操作指令直接工具调用
+- 🔄 **ReAct决策**: Thought→Action→Observation循环，含重复检测和强制终止
+- 🔒 **工具安全**: 防重复下单、调用频率限制
+- 🧹 **输出净化**: 敏感信息脱敏、编造数据标注
+
 ```
-用户请求 → 思考(分析需求) → 行动(调用工具) → 观察(分析结果) → 继续思考...
+用户请求 → 安全检查 → 意图路由 → 上下文优化 → RAG检索(按需) → ReAct推理 → 工具调用 → 输出净化 → 响应
 ```
 
 ### 2. 规则助手 (Qwen Max + RAG)
@@ -58,22 +71,23 @@
 - 🔄 **查询改写**: 优化用户查询提升召回率
 
 ### 3. 运维助手 - Plan-Execute-Replan 模式 📋
-**采用 Plan-Execute-Replan 模式，结合MCP工具实现多步诊断与动态重规划**
+
+**采用 护栏 + 上下文工程 + Plan-Execute-Replan决策 的完整运维Agent架构**
 
 - 📊 **日志查询**: 通过MCP工具查询系统日志
 - 🔗 **链路追踪**: 完整的请求链路分析
 - 📈 **指标监控**: JVM内存、GC、线程状态等
 - 🛠️ **智能诊断**: AI辅助问题定位和解决方案推荐
 - 📋 **计划制定**: 自动制定详细的诊断步骤计划
-- 🔄 **动态调整**: 根据执行结果动态调整后续计划，最多重规划3次
+- 🔄 **动态调整**: 根据执行结果动态调整后续计划，失败自动重试
+- 📦 **结果压缩**: 超长日志/指标数据自动摘要
 
-**工作流程：**
 ```
-问题分析 → 制定计划 → 执行步骤 → 观察结果 → 重新规划(如需) → 最终结论
+问题分析 → 安全检查 → 上下文优化 → 制定计划 → 执行步骤 → 失败重试 → 动态调整 → 最终结论
 ```
 
 ### 4. AI可观测性
-- 💰 **成本统计**: Token用量和API调用费用
+- � **成本统计**: Token用量和API调用费用
 - ⏱️ **性能监控**: 请求延迟、响应时间
 - 📉 **趋势分析**: 按时间、类型的统计图表
 - 🔍 **调用追踪**: 完整的AI调用链路记录
@@ -101,9 +115,9 @@ cp ticket-core-service/src/main/resources/application.yaml.example \
 spring:
   ai:
     openai:
-      api-key: ${alibaba-key}  # 阿里云百炼API Key
+      api-key: ${alibaba-key}
     deepseek:
-      api-key: ${deepseek-key}  # DeepSeek API Key
+      api-key: ${deepseek-key}
 ```
 
 3. **配置数据库**
@@ -140,112 +154,70 @@ npm run dev
 
 ## 核心实现
 
+### 自定义Advisor完整列表
+
+#### 上下文工程
+- **ContextCompressionAdvisor**: 动态上下文压缩，LLM摘要早期对话，保留近期消息
+- **EntityMemoryAdvisor**: 实体记忆提取(城市/节目/手机号/traceId等)，规则+LLM双模式
+- **ToolResultSummaryAdvisor**: 工具结果摘要，压缩超长返回数据，LLM+降级方案
+
+#### Guardrails 护栏
+- **InputGuardrailAdvisor**: 4层检查(Prompt注入/敏感信息/长度/LLM意图分类)
+- **OutputGuardrailAdvisor**: 敏感信息泄露检测、编造数据标注、异步幻觉评分
+- **ToolCallGuardrailAdvisor**: 白名单/频率限制/总次数限制/幂等去重/调用审计
+- **SelfReflectionAdvisor**: 完整性/准确性/有用性/安全性四维自评，低分注入改进指令
+
+#### RAG 增强
+- **AdaptiveRagAdvisor**: 查询分类(闲聊/事实/操作/复合)→按需检索，规则+LLM路由
+- **CorrectiveRagAdvisor**: 相关性评估→低质过滤→查询改写重检索→置信度标注
+
+#### Agent 决策
+- **ReactAdvisor**: 结构化Thought/Action/Observation，重复调用检测，强制终止+摘要
+- **PlanExecuteReplanAdvisor**: JSON计划解析，失败重试(FAILED/RETRYING状态)，步骤依赖
+
+#### 智能路由
+- **AgentRouterAdvisor**: 4类意图(购票/运维/规则/闲聊)，3级复杂度，注入增强指令
+
+#### 业务与可观测性
+- **AiObservabilityAdvisor**: Token统计、成本计算、请求追踪
+- **ChatTypeHistoryAdvisor**: 会话类型管理
+- **ChatTypeTitleAdvisor**: 自动生成会话标题
+- **QueryRewriteAdvisor**: 查询改写优化
+
 ### RAG架构
 
 #### V1版本 - QuestionAnswerAdvisor
 ```java
 QuestionAnswerAdvisor.builder(vectorStore)
     .searchRequest(SearchRequest.builder()
-        .similarityThreshold(0.3)
-        .topK(8)
-        .build())
+        .similarityThreshold(0.3).topK(8).build())
     .build()
 ```
 
-#### V2版本 - 混合检索 + Rerank
+#### V2版本 - 混合检索 + Rerank + Corrective RAG
 ```java
-// 1. 向量检索
-List<Document> vectorResults = vectorStore.similaritySearch(query);
+// 1. 自适应决策：是否需要检索
+AdaptiveRagAdvisor → 分类查询类型 → FACTUAL/COMPLEX触发检索
 
-// 2. 关键词检索
-List<Document> keywordResults = keywordSearch(query);
+// 2. 检索 + 相关性评估
+CorrectiveRagAdvisor → 检索 → LLM评估相关性 → 过滤低质文档
 
-// 3. RRF融合
-List<Document> merged = mergeWithRRF(vectorResults, keywordResults);
+// 3. 查询改写重检索（如果结果不佳）
+CorrectiveRagAdvisor → 改写查询 → 重新检索 → 置信度标注
 
-// 4. Rerank精排
-List<Document> final = rerankService.rerank(query, merged, topK);
-```
-
-### Agent决策模式
-
-#### ReAct (Reason + Act) 模式
-购票助手采用的决策模式，让AI在思考和行动之间循环迭代：
-
-```java
-ReactAdvisor.builder()
-    .maxIterations(5)           // 最多5轮迭代
-    .enableReactLoop(true)      // 启用ReAct循环
-    .order(ADVISOR_ORDER)
-    .build()
-```
-
-**执行流程：**
-1. **Thought (思考)**: 分析当前情况，思考下一步行动
-2. **Action (行动)**: 调用工具执行具体操作
-3. **Observation (观察)**: 观察工具返回结果
-4. **Repeat**: 根据观察继续思考，直到完成任务
-
-#### Plan-Execute-Replan 模式
-运维助手采用的决策模式，制定计划并动态调整：
-
-```java
-PlanExecuteReplanAdvisor.builder()
-    .maxReplans(3)              // 最多重规划3次
-    .enablePlanning(true)       // 启用计划模式
-    .order(ADVISOR_ORDER)
-    .build()
-```
-
-**执行流程：**
-1. **Plan (制定计划)**: 分析问题，制定诊断步骤（JSON格式）
-2. **Execute (执行)**: 按步骤调用MCP工具，收集信息
-3. **Observe (观察)**: 分析执行结果，评估是否达到目标
-4. **Replan (重新规划)**: 根据新发现动态调整后续步骤
-
-**计划示例：**
-```json
-{
-  "goal": "诊断order-service错误",
-  "steps": [
-    {"id": 1, "action": "查询错误日志", "tool": "log_query", "status": "pending"},
-    {"id": 2, "action": "追踪请求链路", "tool": "trace_query", "status": "pending"},
-    {"id": 3, "action": "分析根因", "tool": "analyze", "status": "pending"}
-  ]
-}
-```
-
-### 自定义Advisor列表
-
-- **ReactAdvisor**: ReAct决策模式，支持思考-行动-观察循环
-- **PlanExecuteReplanAdvisor**: 计划-执行-重规划模式，支持动态调整
-- **AiObservabilityAdvisor**: Token统计、成本计算、请求追踪
-- **QueryRewriteAdvisor**: 查询改写优化
-- **ChatTypeHistoryAdvisor**: 会话类型管理
-- **ChatTypeTitleAdvisor**: 自动生成会话标题
-
-### Function Calling示例
-
-```java
-@Description("推荐演出节目")
-public ProgramRecommendation recommendPrograms(
-    @Description("用户所在城市") String city,
-    @Description("节目类型") String type
-) {
-    // 业务逻辑
-    return new ProgramRecommendation(programs);
-}
+// 4. 混合检索 + Rerank（规则助手）
+向量检索 + 关键词检索 → RRF融合 → Rerank精排
 ```
 
 ## 模型配置
 
-| 角色 | 模型 | 决策模式 | 用途 |
-|------|------|----------|------|
-| 贴心助手 | DeepSeek Chat | **ReAct** | 通用对话、Function Calling、迭代式推理 |
-| 规则助手 | Qwen Max | 标准RAG | RAG知识问答、混合检索 |
-| 运维助手 | DeepSeek Chat | **Plan-Execute-Replan** | MCP工具调用、多步诊断、动态规划 |
-| 标题生成 | DeepSeek Chat | 简单生成 | 会话标题自动生成 |
-| Embedding | text-embedding-v3 | - | 向量化 (1024维) |
+| 角色 | 模型 | 决策模式 | Agent层级 | 用途 |
+|------|------|----------|-----------|------|
+| 贴心助手 | DeepSeek Chat | **ReAct** | 护栏+路由+上下文+RAG+决策 | 购票对话、迭代式推理 |
+| 规则助手 | Qwen Max | 标准RAG | Corrective RAG | RAG知识问答、混合检索 |
+| 运维助手 | DeepSeek Chat | **Plan-Execute-Replan** | 护栏+上下文+决策 | MCP工具、多步诊断 |
+| 标题生成 | DeepSeek Chat | 简单生成 | - | 会话标题自动生成 |
+| Embedding | text-embedding-v3 | - | - | 向量化 (1024维) |
 
 ## 项目结构
 
@@ -253,7 +225,7 @@ public ProgramRecommendation recommendPrograms(
 ticket-ai/
 ├── ticket-core-service/           # 核心服务
 │   ├── src/main/java/
-│   │   ├── advisor/              # 自定义Advisor
+│   │   ├── advisor/              # 自定义Advisor (13个)
 │   │   ├── ai/
 │   │   │   ├── function/        # Function Calling实现
 │   │   │   └── rag/             # RAG相关
@@ -278,12 +250,18 @@ ticket-ai/
 
 ## 开发计划
 
+- [x] ReAct决策模式
+- [x] Plan-Execute-Replan模式
+- [x] 上下文工程（压缩/实体记忆/工具摘要）
+- [x] Guardrails护栏体系（输入/输出/工具调用）
+- [x] 自适应RAG + 纠正式RAG
+- [x] 智能路由 + 意图分类
+- [x] 自我反思机制
 - [ ] 支持更多AI模型 (Claude, Gemini等)
 - [ ] 接入向量数据库 (Milvus, Qdrant)
-- [ ] 增强Rerank算法
+- [ ] 多Agent协作 (Supervisor模式)
 - [ ] 支持流式输出
 - [ ] 多租户支持
-- [ ] 更丰富的MCP工具
 
 ## 技术交流
 
