@@ -1,0 +1,25 @@
+# Embedding 模型 LoRA 微调依赖
+# Python >= 3.10
+
+# 核心训练框架
+torch>=2.1.0
+transformers>=4.40.0
+sentence-transformers>=3.0.0
+peft>=0.11.0
+accelerate>=0.30.0
+datasets>=2.19.0
+
+# 数据处理
+pymongo>=4.7.0
+pandas>=2.2.0
+numpy>=1.26.0
+scikit-learn>=1.4.0
+tqdm>=4.66.0
+
+# 模型部署
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.7.0
+
+# 评估
+matplotlib>=3.8.0

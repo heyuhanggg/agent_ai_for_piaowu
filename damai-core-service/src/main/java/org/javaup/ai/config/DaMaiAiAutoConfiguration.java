@@ -2,6 +2,7 @@ package org.javaup.ai.config;
 
 
 import org.javaup.ai.advisor.*;
+import org.javaup.ai.ai.rag.OpsKnowledgeLoader;
 import org.javaup.ai.ai.function.AiProgram;
 import org.javaup.ai.constants.DaMaiConstant;
 import org.javaup.ai.enums.ChatType;
@@ -15,11 +16,15 @@ import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.deepseek.DeepSeekChatModel;
 import org.springframework.ai.openai.OpenAiEmbeddingModel;
+import org.springframework.ai.document.Document;
 import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.vectorstore.SimpleVectorStore;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.io.support.ResourcePatternResolver;
+
+import java.util.List;
 
 import static org.javaup.ai.constants.DaMaiConstant.CHAT_TITLE_ADVISOR_ORDER;
 import static org.javaup.ai.constants.DaMaiConstant.CHAT_TYPE_HISTORY_ADVISOR_ORDER;
@@ -172,13 +177,32 @@ public class DaMaiAiAutoConfiguration {
                 .build();
     }
     
+    // 运维知识库文档加载器
+    @Bean
+    public OpsKnowledgeLoader opsKnowledgeLoader(ResourcePatternResolver resourcePatternResolver) {
+        return new OpsKnowledgeLoader(resourcePatternResolver);
+    }
+    
+    // 运维专用向量库（与规则助手的向量库隔离，避免知识混淆）
+    @Bean("opsVectorStore")
+    public VectorStore opsVectorStore(OpenAiEmbeddingModel embeddingModel, OpsKnowledgeLoader opsKnowledgeLoader) {
+        SimpleVectorStore opsStore = SimpleVectorStore.builder(embeddingModel).build();
+        // 启动时加载运维知识库文档到向量库
+        List<Document> opsDocs = opsKnowledgeLoader.loadOpsKnowledge();
+        if (!opsDocs.isEmpty()) {
+            opsStore.add(opsDocs);
+        }
+        return opsStore;
+    }
+    
     // 运维助手专用 ChatClient。
-    // 采用Plan-Execute-Replan模式 + 上下文工程 + 护栏体系的完整运维Agent架构
+    // 采用Plan-Execute-Replan模式 + 运维RAG知识库 + 上下文工程 + 护栏体系的完整运维Agent架构
     @Bean
     public ChatClient analysisChatClient(DeepSeekChatModel model, ChatMemory chatMemory,
                                           ChatTypeHistoryService chatTypeHistoryService,
                                           @Qualifier("titleChatClient")ChatClient titleChatClient,
                                           @Qualifier("mcpToolCallbackProvider") ToolCallbackProvider mcpToolCallbackProvider,
+                                          @Qualifier("opsVectorStore") VectorStore opsVectorStore,
                                           AiObservabilityService observabilityService) {
         return ChatClient
                 .builder(model)
@@ -225,6 +249,13 @@ public class DaMaiAiAutoConfiguration {
                                 .cacheTtlSeconds(180)
                                 .maxCacheSize(20)
                                 .order(CHAT_TYPE_HISTORY_ADVISOR_ORDER - 18)
+                                .build(),
+                        // === 运维RAG知识库层 ===
+                        // 运维知识检索: 故障排查手册 + SOP流程 + 历史案例 + 架构文档
+                        OpsRagAdvisor.builder(opsVectorStore)
+                                .topK(4)
+                                .similarityThreshold(0.25)
+                                .order(CHAT_TYPE_HISTORY_ADVISOR_ORDER - 15)
                                 .build(),
                         // === 错误恢复层 ===
                         // 工具失败自恢复: 超时/服务不可用/无结果/参数错误/权限不足 各类错误按策略恢复
